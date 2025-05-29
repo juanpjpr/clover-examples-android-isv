@@ -13,7 +13,7 @@
         android:theme="@style/Theme.Cloverisv"
         tools:targetApi="31">
         <activity
-            android:name=".MainActivity"
+            android:name="ar.com.fiserv.clover_isv.MainActivity"
             android:exported="true"
             android:label="@string/app_name"
             android:theme="@style/Theme.Cloverisv">

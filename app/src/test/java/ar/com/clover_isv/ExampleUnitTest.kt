@@ -1,4 +1,4 @@
-package com.example.clover_isv
+package ar.com.clover_isv
 
 import org.junit.Test
 

@@ -1,4 +1,4 @@
-package com.example.clover_isv.ui.theme
+package ar.com.fiserv.clover_isv.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
