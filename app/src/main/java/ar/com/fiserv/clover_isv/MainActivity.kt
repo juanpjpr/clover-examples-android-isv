@@ -1,6 +1,7 @@
 package ar.com.fiserv.clover_isv
 
 import android.app.Activity
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -79,7 +80,18 @@ class MainActivity : ComponentActivity() {
                             onPayClick = {
                                 val externalId = (1_000_000_000_000_00..9_999_999_999_999_99).random().toString()
                                 currentExternalPaymentId = externalId
-                                val intent = PaymentRequestIntentBuilder(externalId, 1000L).build(this@MainActivity)
+
+                                // Crear el PaymentRequestIntentBuilder
+                                val builder = PaymentRequestIntentBuilder(externalId, 1000L)
+
+                                builder.tenderOptions(
+                                    PaymentRequestIntentBuilder.TenderOptions.Disable(
+                                        true, // Deshabilitar efectivo
+                                        true  // Deshabilitar Custom Tender
+                                    )
+                                )
+
+                                val intent = builder.build(this@MainActivity)
                                 isLoading = true
                                 payLauncher.launch(intent)
                             },
@@ -147,6 +159,3 @@ fun PaymentScreen(onPayClick: () -> Unit, onRetrieveClick: () -> Unit, isLoading
         }
     }
 }
-
-
-
