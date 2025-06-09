@@ -1,6 +1,7 @@
 package ar.com.fiserv.clover_isv
 
 import android.app.Activity
+import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import android.view.WindowManager
@@ -23,21 +24,32 @@ import com.clover.sdk.v3.payments.Payment
 import com.clover.sdk.v3.payments.api.PaymentRequestIntentBuilder
 import com.clover.sdk.v3.payments.api.RetrievePaymentRequestIntentBuilder
 import ar.com.fiserv.clover_isv.ui.theme.CloverisvTheme
+import com.clover.sdk.cashdrawer.CloverServiceCashDrawer
+import com.clover.sdk.cfp.activity.helper.CloverCFPActivityHelper
+import com.clover.sdk.cfp.activity.helper.CloverCFPCommsHelper
+import com.clover.sdk.v3.payments.api.KioskPayRequestIntentBuilder
 
 // Colores de Clover
 val CloverGreen = Color(0xFF43B02A)
 val CloverDarkGreen = Color(0xFF388E1E)
 val CloverLightGray = Color(0xFFF5F5F5)
 
-class MainActivity : ComponentActivity() {
+class MainActivity : ComponentActivity(), CloverCFPCommsHelper.MessageListener {
+    private lateinit var activityHelper: CloverCFPActivityHelper
+    private lateinit var commsHelper: CloverCFPCommsHelper
+
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Inicializar helpers para CFP
+        activityHelper = CloverCFPActivityHelper(this)
+        commsHelper = CloverCFPCommsHelper(this, intent, this)
 
         setContent {
             var paymentResult by remember { mutableStateOf<Payment?>(null) }
             var errorMessage by remember { mutableStateOf<String?>(null) }
             var currentExternalPaymentId by remember { mutableStateOf<String?>(null) }
-
             var isLoading by remember { mutableStateOf(false) }
 
             val payLauncher = rememberLauncherForActivityResult(
@@ -79,7 +91,7 @@ class MainActivity : ComponentActivity() {
                         SecretExitArea(
                             modifier = Modifier.align(Alignment.Start),
                             onExit = {
-                                activity!!.finish()
+                                activity?.finish()
                             }
                         )
                     }
@@ -96,17 +108,9 @@ class MainActivity : ComponentActivity() {
                                 val externalId = (1_000_000_000_000_00..9_999_999_999_999_99).random().toString()
                                 currentExternalPaymentId = externalId
 
-                                // Crear el PaymentRequestIntentBuilder
-                                val builder = PaymentRequestIntentBuilder(externalId, 1000L)
-
-                                builder.tenderOptions(
-                                    PaymentRequestIntentBuilder.TenderOptions.Disable(
-                                        true, // Deshabilitar efectivo
-                                        true  // Deshabilitar Custom Tender
-                                    )
-                                )
-
-                                val intent = builder.build(this@MainActivity)
+                                val k = KioskPayRequestIntentBuilder("10".toLong(),"12321321313")
+                                k.taxAmount(10L)
+                                val intent = k.build(this@MainActivity)
                                 isLoading = true
                                 payLauncher.launch(intent)
                             },
@@ -122,6 +126,7 @@ class MainActivity : ComponentActivity() {
                                     errorMessage = "No hay pago para recuperar"
                                 }
                             },
+                            onSendMessageClick = { doSendMessageToPOS() },
                             isLoading = isLoading
                         )
 
@@ -142,24 +147,53 @@ class MainActivity : ComponentActivity() {
                                 style = MaterialTheme.typography.bodyLarge
                             )
                         }
-
                     }
-
                 }
-
             }
         }
+    }
+
+    override fun onDestroy() {
+        activityHelper.dispose()
+        commsHelper.dispose()
+        super.onDestroy()
+    }
+
+    override fun onMessage(payload: String) {
+        // Llamado cuando remoteDeviceConnector.sendMessageToActivity(...) es invocado desde POS
+        if ("FINISH" == payload) {
+            finishWithPayloadToPOS("")
+        }
+    }
+
+    private fun doSendMessageToPOS() {
+        try {
+            val payload = "some message"
+            commsHelper.sendMessage("PROCESANDO_PAGO|${1232313213}")
+           // commsHelper.sendMessage(payload) // enviar mensaje a la instancia RemoteDeviceConnector
+        } catch (e: Exception) {
+            // registrar la excepción, actualizar ui, etc.
+            Log.e("MainActivity", "Error sending message to POS", e)
+        }
+    }
+
+    private fun finishWithPayloadToPOS(resultPayload: String) {
+        activityHelper.setResultAndFinish(Activity.RESULT_OK, resultPayload)
     }
 }
 
 @Composable
-fun PaymentScreen(onPayClick: () -> Unit, onRetrieveClick: () -> Unit, isLoading: Boolean) {
+fun PaymentScreen(onPayClick: () -> Unit, onRetrieveClick: () -> Unit,  onSendMessageClick: () -> Unit,isLoading: Boolean) {
     KeepScreenOn()
 
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
         Button(
             onClick = onPayClick,
-            colors = ButtonDefaults.buttonColors(containerColor = CloverGreen)
+            colors = ButtonDefaults.buttonColors(containerColor = CloverGreen),
+            modifier = Modifier.width(200.dp)
         ) {
             Text("Iniciar Pago", color = Color.White)
         }
@@ -168,7 +202,8 @@ fun PaymentScreen(onPayClick: () -> Unit, onRetrieveClick: () -> Unit, isLoading
 
         Button(
             onClick = onRetrieveClick,
-            colors = ButtonDefaults.buttonColors(containerColor = CloverDarkGreen)
+            colors = ButtonDefaults.buttonColors(containerColor = CloverDarkGreen),
+            modifier = Modifier.width(200.dp)
         ) {
             Text("Recuperar Pago", color = Color.White)
         }
@@ -178,7 +213,6 @@ fun PaymentScreen(onPayClick: () -> Unit, onRetrieveClick: () -> Unit, isLoading
             CircularProgressIndicator(color = CloverGreen)
         }
     }
-
 }
 
 @Composable
