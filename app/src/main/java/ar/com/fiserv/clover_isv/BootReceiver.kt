@@ -12,15 +12,16 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
 
         if (Intent.ACTION_BOOT_COMPLETED == intent.action) {
+            Log.d("BootReceiver", "Dispositivo encendido - BOOT_COMPLETED recibido")
             val lockscreen = Lockscreen(context)
-            if (lockscreen.unlockDefault()) {
-                Log.d("jpr","ENTrA")
-                startMainActivity(context)
-            } else {
-                Log.d("jpr"," no ENTrA")
-                lockscreen.unlock() // Fallback a desbloqueo normal
-                startMainActivity(context)
-            }
+
+            lockscreen.unlockDefault()
+
+            startMainActivity(context)
+        }
+        else
+        {
+            Log.d("BootReceiver", "Dispositivo encendido - no lllego")
         }
     }
 

@@ -1,18 +1,22 @@
 package ar.com.fiserv.clover_isv
 
 import android.app.Activity
-import android.content.Intent
 import android.os.Bundle
+import android.util.Log
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.clover.sdk.v1.Intents
 import com.clover.sdk.v3.payments.Payment
@@ -69,6 +73,17 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = CloverLightGray
                 ) {
+                    val context = LocalContext.current
+                    val activity = context as? Activity
+                    Column {
+                        SecretExitArea(
+                            modifier = Modifier.align(Alignment.Start),
+                            onExit = {
+                                activity!!.finish()
+                            }
+                        )
+                    }
+
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -127,8 +142,11 @@ class MainActivity : ComponentActivity() {
                                 style = MaterialTheme.typography.bodyLarge
                             )
                         }
+
                     }
+
                 }
+
             }
         }
     }
@@ -136,6 +154,8 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun PaymentScreen(onPayClick: () -> Unit, onRetrieveClick: () -> Unit, isLoading: Boolean) {
+    KeepScreenOn()
+
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Button(
             onClick = onPayClick,
@@ -158,4 +178,54 @@ fun PaymentScreen(onPayClick: () -> Unit, onRetrieveClick: () -> Unit, isLoading
             CircularProgressIndicator(color = CloverGreen)
         }
     }
+
+}
+
+@Composable
+fun KeepScreenOn() {
+    val context = LocalContext.current
+    val activity = context as? Activity
+
+    DisposableEffect(Unit) {
+        activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        onDispose {
+            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+}
+
+@Composable
+fun SecretExitArea(
+    modifier: Modifier = Modifier,
+    onExit: () -> Unit
+) {
+    var tapCount by remember { mutableStateOf(0) }
+    val timeoutMillis = 1000L
+    var lastTapTime by remember { mutableStateOf(0L) }
+
+    Box(
+        modifier = modifier
+            .size(100.dp)
+            .padding(8.dp)
+            .pointerInput(Unit) {
+                detectTapGestures {
+                    val currentTime = System.currentTimeMillis()
+                    if (currentTime - lastTapTime < timeoutMillis) {
+                        tapCount++
+                    } else {
+                        tapCount = 1
+                    }
+                    lastTapTime = currentTime
+
+                    Log.d("SecretExit", "Tap count: $tapCount")
+
+                    if (tapCount >= 3) {
+                        Log.d("SecretExit", "Saliendo de la app")
+                        onExit()
+                        tapCount = 0
+                    }
+                }
+            }
+    )
 }
