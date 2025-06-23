@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
 import android.util.Log
+import android.view.View
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -39,9 +40,20 @@ class MainActivity : ComponentActivity(), CloverCFPCommsHelper.MessageListener {
     private lateinit var commsHelper: CloverCFPCommsHelper
 
 
+    private fun hideSystemUI() {
+        window.decorView.systemUiVisibility =
+            (View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    or View.SYSTEM_UI_FLAG_FULLSCREEN
+                    or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                    or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    or View.SYSTEM_UI_FLAG_LAYOUT_STABLE)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        hideSystemUI()
         // Inicializar helpers para CFP
         activityHelper = CloverCFPActivityHelper(this)
         commsHelper = CloverCFPCommsHelper(this, intent, this)
@@ -105,10 +117,10 @@ class MainActivity : ComponentActivity(), CloverCFPCommsHelper.MessageListener {
                     ) {
                         PaymentScreen(
                             onPayClick = {
-                                val externalId = (1_000_000_000_000_00..9_999_999_999_999_99).random().toString()
+                                val externalId = (1_000_000_000..9_999_999_999).random().toString()
                                 currentExternalPaymentId = externalId
 
-                                val k = KioskPayRequestIntentBuilder("10".toLong(),"12321321313")
+                                val k = KioskPayRequestIntentBuilder("10".toLong(),currentExternalPaymentId.toString())
                                 k.taxAmount(10L)
                                 val intent = k.build(this@MainActivity)
                                 isLoading = true
@@ -182,21 +194,50 @@ class MainActivity : ComponentActivity(), CloverCFPCommsHelper.MessageListener {
     }
 }
 
+
 @Composable
-fun PaymentScreen(onPayClick: () -> Unit, onRetrieveClick: () -> Unit,  onSendMessageClick: () -> Unit,isLoading: Boolean) {
+fun PaymentScreen(
+    onPayClick: (Long) -> Unit,  // 👈 cambia esto
+    onRetrieveClick: () -> Unit,
+    onSendMessageClick: () -> Unit,
+    isLoading: Boolean
+) {
     KeepScreenOn()
+
+    var amountText by remember { mutableStateOf("") }
+
+    fun getAmountLong(): Long {
+        return amountText.toLongOrNull() ?: 0L
+    }
+
 
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Button(
-            onClick = onPayClick,
-            colors = ButtonDefaults.buttonColors(containerColor = CloverGreen),
-            modifier = Modifier.width(200.dp)
-        ) {
-            Text("Iniciar Pago", color = Color.White)
-        }
+        Text(
+            text = "$${amountText.ifEmpty { "0" }}",
+            style = MaterialTheme.typography.headlineLarge,
+            color = CloverDarkGreen,
+            modifier = Modifier.padding(16.dp)
+        )
+
+        NumberPad(
+            onNumberClick = { digit ->
+                if (amountText.length < 9) amountText += digit
+            },
+            onDeleteClick = {
+                if (amountText.isNotEmpty()) {
+                    amountText = amountText.dropLast(1)
+                }
+            },
+            onAcceptClick = {
+                val amount = getAmountLong()
+                if (amount > 0) {
+                    onPayClick(amount)
+                }
+            }
+        )
 
         Spacer(modifier = Modifier.height(16.dp))
 
@@ -262,4 +303,53 @@ fun SecretExitArea(
                 }
             }
     )
+}
+
+@Composable
+fun NumberPad(
+    onNumberClick: (String) -> Unit,
+    onDeleteClick: () -> Unit,
+    onAcceptClick: () -> Unit
+) {
+    val buttons = listOf(
+        listOf("1", "2", "3"),
+        listOf("4", "5", "6"),
+        listOf("7", "8", "9"),
+        listOf("Del", "0", "OK")
+    )
+
+    Column {
+        buttons.forEach { row ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                row.forEach { label ->
+                    Button(
+                        onClick = {
+                            when (label) {
+                                "Del" -> onDeleteClick()
+                                "OK" -> onAcceptClick()
+                                else -> onNumberClick(label)
+                            }
+                        },
+                        modifier = Modifier
+                            .size(80.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = when (label) {
+                                "OK" -> CloverGreen
+                                "Del" -> MaterialTheme.colorScheme.error
+                                else -> MaterialTheme.colorScheme.primary
+                            },
+                            contentColor = Color.White
+                        )
+                    ) {
+                        Text(label, style = MaterialTheme.typography.titleLarge)
+                    }
+                }
+            }
+        }
+    }
 }
