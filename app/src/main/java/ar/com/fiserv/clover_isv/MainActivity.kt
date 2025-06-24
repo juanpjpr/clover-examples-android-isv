@@ -28,6 +28,7 @@ import ar.com.fiserv.clover_isv.ui.theme.CloverisvTheme
 import com.clover.sdk.cashdrawer.CloverServiceCashDrawer
 import com.clover.sdk.cfp.activity.helper.CloverCFPActivityHelper
 import com.clover.sdk.cfp.activity.helper.CloverCFPCommsHelper
+import com.clover.sdk.util.CustomerMode
 import com.clover.sdk.v3.payments.api.KioskPayRequestIntentBuilder
 
 // Colores de Clover
@@ -40,20 +41,12 @@ class MainActivity : ComponentActivity(), CloverCFPCommsHelper.MessageListener {
     private lateinit var commsHelper: CloverCFPCommsHelper
 
 
-    private fun hideSystemUI() {
-        window.decorView.systemUiVisibility =
-            (View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                    or View.SYSTEM_UI_FLAG_FULLSCREEN
-                    or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                    or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                    or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                    or View.SYSTEM_UI_FLAG_LAYOUT_STABLE)
-    }
+
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        hideSystemUI()
+        CustomerMode.enable(this)
         // Inicializar helpers para CFP
         activityHelper = CloverCFPActivityHelper(this)
         commsHelper = CloverCFPCommsHelper(this, intent, this)
