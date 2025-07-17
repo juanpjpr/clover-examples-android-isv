@@ -12,7 +12,7 @@ android {
         minSdk = 24
         //noinspection ExpiredTargetSdkVersion
         targetSdk = 28
-        versionCode = 3
+        versionCode = 4
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -24,7 +24,7 @@ android {
     // 🔐 Configuración de firma
     signingConfigs {
         create("release") {
-            storeFile = file("C:/Users/jprju/keystore.jks")
+            storeFile = file("keystore.jks")
             storePassword = "clover"
             keyAlias = "key0"
             keyPassword = "clover"
@@ -86,5 +86,5 @@ dependencies {
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
-    implementation(libs.clover.android.sdk)
+    implementation("com.clover.sdk:clover-android-sdk:323")
 }

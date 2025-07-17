@@ -3,6 +3,7 @@ package ar.com.fiserv.clover_isv
 import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
+import android.os.Parcelable
 import android.util.Log
 import android.view.View
 import android.view.WindowManager
@@ -29,7 +30,10 @@ import com.clover.sdk.cashdrawer.CloverServiceCashDrawer
 import com.clover.sdk.cfp.activity.helper.CloverCFPActivityHelper
 import com.clover.sdk.cfp.activity.helper.CloverCFPCommsHelper
 import com.clover.sdk.util.CustomerMode
+import com.clover.sdk.v3.payments.RegionalExtras
+import com.clover.sdk.v3.payments.api.CreditRequestIntentBuilder.CardOptions
 import com.clover.sdk.v3.payments.api.KioskPayRequestIntentBuilder
+import java.util.HashMap
 
 // Colores de Clover
 val CloverGreen = Color(0xFF43B02A)
@@ -109,15 +113,46 @@ class MainActivity : ComponentActivity(), CloverCFPCommsHelper.MessageListener {
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         PaymentScreen(
-                            onPayClick = {
+                            onPayClick = { amount ->
                                 val externalId = (1_000_000_000..9_999_999_999).random().toString()
                                 currentExternalPaymentId = externalId
 
-                                val k = KioskPayRequestIntentBuilder("10".toLong(),currentExternalPaymentId.toString())
-                                k.taxAmount(10L)
-                                val intent = k.build(this@MainActivity)
+                                // intents.putExtra("clover.intent.extra.CUSTOMER_TENDER", "ar.com.fiserv.fiservqr.dev")
+                                //  intents.putExtra("clover.intent.extra.CUSTOMER_TENDER_REQUIRED", true)
+
+                                // p = PaymentRequestIntentBuilder(currentExternalPaymentId.toString(), amount )
+                                val p = KioskPayRequestIntentBuilder(amount, currentExternalPaymentId.toString())
+                                val intent = p.build(this@MainActivity)
+
+
+                                var map = HashMap<String, String>()
+
+                                map.put(RegionalExtras.INSTALLMENT_NUMBER_KEY, "2")
+                                map.put(RegionalExtras.INSTALLMENT_NUMBER_KEY, "2")
+                                intent.putExtra(Intents.EXTRA_REGIONAL_EXTRAS,map)
+
+                               //  intent.putExtra("clover.intent.extra.CUSTOMER_TENDER", "ar.com.fiserv.fiservqr.dev")
+                              //   intent.putExtra("clover.intent.extra.CUSTOMER_TENDER_REQUIRED", true)
+                                intent.putExtra("cashbackAmount", "123213".toLong())
+
+
+
                                 isLoading = true
                                 payLauncher.launch(intent)
+                            },
+                            onPayQrClick = { amount ->
+                                val externalId = (1_000_000_000..9_999_999_999).random().toString()
+                                currentExternalPaymentId = externalId
+
+                                val p = KioskPayRequestIntentBuilder(amount, currentExternalPaymentId.toString())
+                               // val p = PaymentRequestIntentBuilder(currentExternalPaymentId.toString(), amount )
+                                val intents = p.build(this@MainActivity)
+
+
+
+
+                                isLoading = true
+                                payLauncher.launch(intents)
                             },
                             onRetrieveClick = {
                                 val externalId = currentExternalPaymentId
@@ -131,9 +166,13 @@ class MainActivity : ComponentActivity(), CloverCFPCommsHelper.MessageListener {
                                     errorMessage = "No hay pago para recuperar"
                                 }
                             },
-                            onSendMessageClick = { doSendMessageToPOS() },
+                            onSendMessageClick = {
+                                doSendMessageToPOS()
+                            },
                             isLoading = isLoading
                         )
+
+
 
                         Spacer(modifier = Modifier.height(24.dp))
 
@@ -190,11 +229,12 @@ class MainActivity : ComponentActivity(), CloverCFPCommsHelper.MessageListener {
 
 @Composable
 fun PaymentScreen(
-    onPayClick: (Long) -> Unit,  // 👈 cambia esto
+    onPayClick: (Long) -> Unit,
+    onPayQrClick: (Long) -> Unit,  // 👈 nuevo parámetro
     onRetrieveClick: () -> Unit,
     onSendMessageClick: () -> Unit,
     isLoading: Boolean
-) {
+){
     KeepScreenOn()
 
     var amountText by remember { mutableStateOf("") }
@@ -240,6 +280,23 @@ fun PaymentScreen(
             modifier = Modifier.width(200.dp)
         ) {
             Text("Recuperar Pago", color = Color.White)
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Button(
+            onClick = {
+                val amount = getAmountLong()
+                if (amount > 0) {
+                    onPayQrClick(amount)
+                }
+            },
+            colors = ButtonDefaults.buttonColors(containerColor = CloverGreen),
+            modifier = Modifier
+                .width(200.dp)
+                .padding(top = 8.dp)
+        ) {
+            Text("Pagar con QR", color = Color.White)
         }
 
         if (isLoading) {
