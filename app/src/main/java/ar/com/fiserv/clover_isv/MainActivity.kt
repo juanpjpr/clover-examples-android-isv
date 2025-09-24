@@ -23,16 +23,17 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.clover.sdk.v1.Intents
 import com.clover.sdk.v3.payments.Payment
-import com.clover.sdk.v3.payments.api.PaymentRequestIntentBuilder
 import com.clover.sdk.v3.payments.api.RetrievePaymentRequestIntentBuilder
 import ar.com.fiserv.clover_isv.ui.theme.CloverisvTheme
-import com.clover.sdk.cashdrawer.CloverServiceCashDrawer
 import com.clover.sdk.cfp.activity.helper.CloverCFPActivityHelper
 import com.clover.sdk.cfp.activity.helper.CloverCFPCommsHelper
 import com.clover.sdk.util.CustomerMode
+import com.clover.sdk.v1.Intents.EXTRA_CUSTOMER_TENDER
+import com.clover.sdk.v3.payments.Batch
 import com.clover.sdk.v3.payments.RegionalExtras
-import com.clover.sdk.v3.payments.api.CreditRequestIntentBuilder.CardOptions
+import com.clover.sdk.v3.payments.api.CloseoutRequestIntentBuilder
 import com.clover.sdk.v3.payments.api.KioskPayRequestIntentBuilder
+import com.clover.sdk.v3.payments.api.PaymentRequestIntentBuilder
 import java.util.HashMap
 
 // Colores de Clover
@@ -40,12 +41,11 @@ val CloverGreen = Color(0xFF43B02A)
 val CloverDarkGreen = Color(0xFF388E1E)
 val CloverLightGray = Color(0xFFF5F5F5)
 
+private const val CLOSEOUT_REQUEST_CODE = 1001
+
 class MainActivity : ComponentActivity(), CloverCFPCommsHelper.MessageListener {
     private lateinit var activityHelper: CloverCFPActivityHelper
     private lateinit var commsHelper: CloverCFPCommsHelper
-
-
-
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -89,6 +89,30 @@ class MainActivity : ComponentActivity(), CloverCFPCommsHelper.MessageListener {
                 }
             }
 
+            val closeoutLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.StartActivityForResult()
+            ) { result ->
+                isLoading = false
+                val data = result.data
+                if (result.resultCode == Activity.RESULT_OK) {
+                    val batch = data?.getParcelableExtra<Batch>(CloseoutRequestIntentBuilder.Response.BATCH)
+                    errorMessage = "✅ Cierre de lote exitoso: ID ${batch?.id}"
+                    paymentResult = null // Clear previous payment result
+                } else {
+                    val failureMessage = data?.getStringExtra(CloseoutRequestIntentBuilder.Response.FAILURE_MESSAGE)
+                    val paymentIds = data?.getStringArrayListExtra(CloseoutRequestIntentBuilder.Response.PAYMENT_IDS)
+                    var errorText = "❌ Falló el cierre de lote"
+                    if (failureMessage != null) {
+                        errorText += ": $failureMessage"
+                    }
+                    if (paymentIds != null && paymentIds.isNotEmpty()) {
+                        errorText += "\nIDs de pago abiertos: ${paymentIds.joinToString()}"
+                    }
+                    errorMessage = errorText
+                    paymentResult = null // Clear previous payment result
+                }
+            }
+
             CloverisvTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
@@ -116,25 +140,19 @@ class MainActivity : ComponentActivity(), CloverCFPCommsHelper.MessageListener {
                             onPayClick = { amount ->
                                 val externalId = (1_000_000_000..9_999_999_999).random().toString()
                                 currentExternalPaymentId = externalId
-
-                                // intents.putExtra("clover.intent.extra.CUSTOMER_TENDER", "ar.com.fiserv.fiservqr.dev")
-                                //  intents.putExtra("clover.intent.extra.CUSTOMER_TENDER_REQUIRED", true)
-
-                                // p = PaymentRequestIntentBuilder(currentExternalPaymentId.toString(), amount )
                                 val p = KioskPayRequestIntentBuilder(amount, currentExternalPaymentId.toString())
+                                //val p = PaymentRequestIntentBuilder(currentExternalPaymentId.toString(), amount)
                                 val intent = p.build(this@MainActivity)
-
-
                                 var map = HashMap<String, String>()
-
-                                map.put(RegionalExtras.INSTALLMENT_NUMBER_KEY, "2")
-                                map.put(RegionalExtras.INSTALLMENT_NUMBER_KEY, "2")
+                                //map.put(RegionalExtras.INSTALLMENT_NUMBER_KEY, "2")
+                                     //map.put(RegionalExtras.CASHBACK_AMOUNT_KEY, "12300")
+                                map.put(RegionalExtras.FISCAL_INVOICE_NUMBER_KEY, "123456778892")
+                                //map.put(EXTRA_CUSTOMER_TENDER, "ar.com.fiserv.fiservqr.dev")
+                               // map.put("clover.intent.extra.CUSTOMER_TENDER_REQUIRED", "true")
+                                //map.put(RegionalExtras.BUSINESS_ID_KEY, "123")
+                               // map.put(RegionalExtras.SUB_MERCHANT_KEY, "123")
+                             //   map.put(RegionalExtras.DYNAMIC_MERCHANT_NAME_KEY, "123")
                                 intent.putExtra(Intents.EXTRA_REGIONAL_EXTRAS,map)
-
-                               //  intent.putExtra("clover.intent.extra.CUSTOMER_TENDER", "ar.com.fiserv.fiservqr.dev")
-                              //   intent.putExtra("clover.intent.extra.CUSTOMER_TENDER_REQUIRED", true)
-                                intent.putExtra("cashbackAmount", "123213".toLong())
-
 
 
                                 isLoading = true
@@ -143,14 +161,8 @@ class MainActivity : ComponentActivity(), CloverCFPCommsHelper.MessageListener {
                             onPayQrClick = { amount ->
                                 val externalId = (1_000_000_000..9_999_999_999).random().toString()
                                 currentExternalPaymentId = externalId
-
                                 val p = KioskPayRequestIntentBuilder(amount, currentExternalPaymentId.toString())
-                               // val p = PaymentRequestIntentBuilder(currentExternalPaymentId.toString(), amount )
                                 val intents = p.build(this@MainActivity)
-
-
-
-
                                 isLoading = true
                                 payLauncher.launch(intents)
                             },
@@ -169,10 +181,17 @@ class MainActivity : ComponentActivity(), CloverCFPCommsHelper.MessageListener {
                             onSendMessageClick = {
                                 doSendMessageToPOS()
                             },
+                            onCloseoutBatchClick = {
+                                isLoading = true
+                                errorMessage = null // Clear previous messages
+                                paymentResult = null // Clear previous payment result
+                                val builder  = CloseoutRequestIntentBuilder()
+                                val tipOptions = CloseoutRequestIntentBuilder.TipOptions.ZeroOutOpenTips()
+                                val intent = builder.tipOptions(tipOptions).build(this@MainActivity)
+                                closeoutLauncher.launch(intent)
+                            },
                             isLoading = isLoading
                         )
-
-
 
                         Spacer(modifier = Modifier.height(24.dp))
 
@@ -186,8 +205,8 @@ class MainActivity : ComponentActivity(), CloverCFPCommsHelper.MessageListener {
 
                         errorMessage?.let {
                             Text(
-                                text = "❌ Error: $it",
-                                color = MaterialTheme.colorScheme.error,
+                                text = it, // Display success or failure message from closeout or payment
+                                color = if (it.startsWith("✅")) CloverDarkGreen else MaterialTheme.colorScheme.error,
                                 style = MaterialTheme.typography.bodyLarge
                             )
                         }
@@ -204,7 +223,6 @@ class MainActivity : ComponentActivity(), CloverCFPCommsHelper.MessageListener {
     }
 
     override fun onMessage(payload: String) {
-        // Llamado cuando remoteDeviceConnector.sendMessageToActivity(...) es invocado desde POS
         if ("FINISH" == payload) {
             finishWithPayloadToPOS("")
         }
@@ -212,11 +230,8 @@ class MainActivity : ComponentActivity(), CloverCFPCommsHelper.MessageListener {
 
     private fun doSendMessageToPOS() {
         try {
-            val payload = "some message"
             commsHelper.sendMessage("PROCESANDO_PAGO|${1232313213}")
-           // commsHelper.sendMessage(payload) // enviar mensaje a la instancia RemoteDeviceConnector
         } catch (e: Exception) {
-            // registrar la excepción, actualizar ui, etc.
             Log.e("MainActivity", "Error sending message to POS", e)
         }
     }
@@ -230,19 +245,18 @@ class MainActivity : ComponentActivity(), CloverCFPCommsHelper.MessageListener {
 @Composable
 fun PaymentScreen(
     onPayClick: (Long) -> Unit,
-    onPayQrClick: (Long) -> Unit,  // 👈 nuevo parámetro
+    onPayQrClick: (Long) -> Unit,
     onRetrieveClick: () -> Unit,
     onSendMessageClick: () -> Unit,
+    onCloseoutBatchClick: () -> Unit, // New callback for closeout
     isLoading: Boolean
 ){
-    KeepScreenOn()
-
+    //KeepScreenOn()
     var amountText by remember { mutableStateOf("") }
 
     fun getAmountLong(): Long {
         return amountText.toLongOrNull() ?: 0L
     }
-
 
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -268,6 +282,14 @@ fun PaymentScreen(
                 val amount = getAmountLong()
                 if (amount > 0) {
                     onPayClick(amount)
+                } else {
+                    // If amount is 0 and NumberPad OK is clicked,
+                    // consider it as "Send Message" if that's the desired flow,
+                    // or handle as an invalid payment amount.
+                    // For now, let's assume it could be a signal for another action if needed
+                    // or simply does nothing if amount is not > 0 for payment.
+                    // If "OK" on numpad should also trigger closeout if amount is 0,
+                    // that logic would be added here.
                 }
             }
         )
@@ -282,7 +304,7 @@ fun PaymentScreen(
             Text("Recuperar Pago", color = Color.White)
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(8.dp)) // Reduced spacer
 
         Button(
             onClick = {
@@ -292,12 +314,32 @@ fun PaymentScreen(
                 }
             },
             colors = ButtonDefaults.buttonColors(containerColor = CloverGreen),
-            modifier = Modifier
-                .width(200.dp)
-                .padding(top = 8.dp)
+            modifier = Modifier.width(200.dp)
         ) {
             Text("Pagar con QR", color = Color.White)
         }
+
+        Spacer(modifier = Modifier.height(8.dp)) // Reduced spacer
+
+        Button(
+            onClick = onCloseoutBatchClick, // Invoke the closeout callback
+            colors = ButtonDefaults.buttonColors(containerColor = CloverDarkGreen), // Consistent color
+            modifier = Modifier.width(200.dp)
+        ) {
+            Text("Cierre de Lote", color = Color.White)
+        }
+
+
+        // Consider if onSendMessageClick needs a dedicated button or is triggered differently
+        // Spacer(modifier = Modifier.height(8.dp))
+        // Button(
+        // onClick = onSendMessageClick,
+        // colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
+        // modifier = Modifier.width(200.dp)
+        // ) {
+        // Text("Send Message to POS", color = Color.White)
+        // }
+
 
         if (isLoading) {
             Spacer(modifier = Modifier.height(24.dp))
@@ -313,7 +355,6 @@ fun KeepScreenOn() {
 
     DisposableEffect(Unit) {
         activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-
         onDispose {
             activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
@@ -342,11 +383,7 @@ fun SecretExitArea(
                         tapCount = 1
                     }
                     lastTapTime = currentTime
-
-                    Log.d("SecretExit", "Tap count: $tapCount")
-
                     if (tapCount >= 3) {
-                        Log.d("SecretExit", "Saliendo de la app")
                         onExit()
                         tapCount = 0
                     }
