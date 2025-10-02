@@ -2,15 +2,16 @@ package ar.com.fiserv.clover_isv
 
 import android.app.Activity
 import android.os.Bundle
+import android.util.Log
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -20,49 +21,210 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import ar.com.fiserv.clover_isv.ui.theme.CloverisvTheme
+import com.clover.sdk.cfp.activity.helper.CloverCFPActivityHelper
+import com.clover.sdk.cfp.activity.helper.CloverCFPCommsHelper
+import com.clover.sdk.util.CustomerMode
 import com.clover.sdk.v1.Intents
+import com.clover.sdk.v3.payments.Batch
+import com.clover.sdk.v3.payments.Payment
 import com.clover.sdk.v3.payments.RegionalExtras
+import com.clover.sdk.v3.payments.api.CloseoutRequestIntentBuilder
+import com.clover.sdk.v3.payments.api.KioskPayRequestIntentBuilder
+import com.clover.sdk.v3.payments.api.RetrievePaymentRequestIntentBuilder
+import java.util.HashMap
 
 // Colores de Clover
 val CloverGreen = Color(0xFF43B02A)
 val CloverDarkGreen = Color(0xFF388E1E)
 val CloverLightGray = Color(0xFFF5F5F5)
 
-class MainActivity : ComponentActivity() {
+class MainActivity : ComponentActivity(), CloverCFPCommsHelper.MessageListener {
+    private lateinit var activityHelper: CloverCFPActivityHelper
+    private lateinit var commsHelper: CloverCFPCommsHelper
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        CustomerMode.enable(this)
+        // Inicializar helpers para CFP
+        activityHelper = CloverCFPActivityHelper(this)
+        commsHelper = CloverCFPCommsHelper(this, intent, this)
+
         setContent {
+            var paymentResult by remember { mutableStateOf<Payment?>(null) }
+            var errorMessage by remember { mutableStateOf<String?>(null) }
+            var currentExternalPaymentId by remember { mutableStateOf<String?>(null) }
+            var isLoading by remember { mutableStateOf(false) }
+
+            val payLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.StartActivityForResult()
+            ) { result ->
+                isLoading = false
+                val data = result.data
+                if (result.resultCode == Activity.RESULT_OK) {
+                    val payment = data?.getParcelableExtra<Payment>(Intents.EXTRA_PAYMENT)
+                    paymentResult = payment
+                    errorMessage = null
+                } else {
+                    errorMessage = "❌ " + data?.getStringExtra(Intents.EXTRA_FAILURE_MESSAGE)
+                }
+            }
+
+            val retrieveLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.StartActivityForResult()
+            ) { result ->
+                isLoading = false
+                val data = result.data
+                if (result.resultCode == Activity.RESULT_OK) {
+                    val payment = data?.getParcelableExtra<Payment>(Intents.EXTRA_PAYMENT)
+                    paymentResult = payment
+                    errorMessage = null
+                } else {
+                    errorMessage = "❌ " + data?.getStringExtra(Intents.EXTRA_FAILURE_MESSAGE)
+                }
+            }
+
+            val closeoutLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.StartActivityForResult()
+            ) { result ->
+                isLoading = false
+                val data = result.data
+                if (result.resultCode == Activity.RESULT_OK) {
+                    val batch = data?.getParcelableExtra<Batch>(CloseoutRequestIntentBuilder.Response.BATCH)
+                    errorMessage = "✅ Cierre de lote exitoso: ID ${batch?.id}"
+                    paymentResult = null
+                } else {
+                    val failureMessage = data?.getStringExtra(CloseoutRequestIntentBuilder.Response.FAILURE_MESSAGE)
+                    val paymentIds = data?.getStringArrayListExtra(CloseoutRequestIntentBuilder.Response.PAYMENT_IDS)
+                    var errorText = "❌ Falló el cierre de lote"
+                    if (failureMessage != null) {
+                        errorText += ": $failureMessage"
+                    }
+                    if (paymentIds != null && paymentIds.isNotEmpty()) {
+                        errorText += "\nIDs de pago abiertos: ${paymentIds.joinToString()}"
+                    }
+                    errorMessage = errorText
+                    paymentResult = null
+                }
+            }
+
             CloverisvTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = CloverLightGray
                 ) {
-                    PaymentScreen(
-                        onPayClick = { amount, extras -> /* lógica de pago */ },
-                        onRetrieveClick = { /* recuperar pago */ },
-                        onSendMessageClick = { /* enviar mensaje */ },
-                        onCloseoutBatchClick = { /* cierre de lote */ },
-                        isLoading = false
-                    )
+                    val context = LocalContext.current
+                    val activity = context as? Activity
+                    Column {
+                        SecretExitArea(
+                            modifier = Modifier.align(Alignment.Start),
+                            onExit = {
+                                activity?.finish()
+                            }
+                        )
+                    }
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(24.dp),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        PaymentScreen(
+                            onPayClick = { amount, extras ->
+                                val externalId = (1_000_000_000..9_999_999_999).random().toString()
+                                currentExternalPaymentId = externalId
+                                val p = KioskPayRequestIntentBuilder(amount, externalId)
+                                val intent = p.build(this@MainActivity)
+
+                                if (extras.isNotEmpty()) {
+                                    val extrasHashMap = HashMap<String, String>(extras)
+                                    intent.putExtra(Intents.EXTRA_REGIONAL_EXTRAS, extrasHashMap)
+                                }
+
+                                isLoading = true
+                                payLauncher.launch(intent)
+                            },
+                            onRetrieveClick = {
+                                val externalId = currentExternalPaymentId
+                                if (externalId != null) {
+                                    val intent = RetrievePaymentRequestIntentBuilder()
+                                        .externalPaymentId(externalId)
+                                        .build(this@MainActivity)
+                                    isLoading = true
+                                    retrieveLauncher.launch(intent)
+                                } else {
+                                    errorMessage = "No hay pago para recuperar"
+                                }
+                            },
+                            onSendMessageClick = {
+                                doSendMessageToPOS()
+                            },
+                            onCloseoutBatchClick = {
+                                isLoading = true
+                                errorMessage = null
+                                paymentResult = null
+                                val builder  = CloseoutRequestIntentBuilder()
+                                val tipOptions = CloseoutRequestIntentBuilder.TipOptions.ZeroOutOpenTips()
+                                val intent = builder.tipOptions(tipOptions).build(this@MainActivity)
+                                closeoutLauncher.launch(intent)
+                            },
+                            isLoading = isLoading
+                        )
+
+                        Spacer(modifier = Modifier.height(24.dp))
+
+                        paymentResult?.let {
+                            Text(
+                                text = "✅ Pago exitoso: ${it.id}",
+                                color = CloverDarkGreen,
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                        }
+
+                        errorMessage?.let {
+                            Text(
+                                text = it,
+                                color = if (it.startsWith("✅")) CloverDarkGreen else MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                        }
+                    }
                 }
             }
         }
     }
+
+    override fun onDestroy() {
+        activityHelper.dispose()
+        commsHelper.dispose()
+        super.onDestroy()
+    }
+
+    override fun onMessage(payload: String) {
+        if ("FINISH" == payload) {
+            finishWithPayloadToPOS("")
+        }
+    }
+
+    private fun doSendMessageToPOS() {
+        try {
+            commsHelper.sendMessage("PROCESANDO_PAGO|${1232313213}")
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Error sending message to POS", e)
+        }
+    }
+
+    private fun finishWithPayloadToPOS(resultPayload: String) {
+        activityHelper.setResultAndFinish(Activity.RESULT_OK, resultPayload)
+    }
 }
 
 // =================================================================================
-// DATA CLASS PARA KEY-VALUE DINÁMICO
+// Composable Functions
 // =================================================================================
-data class KeyValuePair(
-    val id: Int,
-    val key: String = "",
-    val value: String = "",
-    val enabled: Boolean = true
-)
 
-// =================================================================================
-// COMPOSABLE PRINCIPAL
-// =================================================================================
 @Composable
 fun PaymentScreen(
     onPayClick: (Long, Map<String, String>) -> Unit,
@@ -70,11 +232,11 @@ fun PaymentScreen(
     onSendMessageClick: () -> Unit,
     onCloseoutBatchClick: () -> Unit,
     isLoading: Boolean
-) {
+){
     KeepScreenOn()
     var amountText by remember { mutableStateOf("") }
 
-    // --- ESTADOS PARA EXTRAS REGIONALES ---
+    // --- ESTADOS PARA LOS REGIONAL EXTRAS ---
     var fiscalInvoiceEnabled by remember { mutableStateOf(false) }
     var fiscalInvoiceNumber by remember { mutableStateOf("") }
     var installmentEnabled by remember { mutableStateOf(false) }
@@ -82,6 +244,7 @@ fun PaymentScreen(
     var cashbackEnabled by remember { mutableStateOf(false) }
     var cashbackAmount by remember { mutableStateOf("") }
     var isQrPayment by remember { mutableStateOf(false) }
+    // ▼▼▼ NUEVOS ESTADOS AÑADIDOS ▼▼▼
     var businessIdEnabled by remember { mutableStateOf(false) }
     var businessId by remember { mutableStateOf("") }
     var subMerchantEnabled by remember { mutableStateOf(false) }
@@ -89,56 +252,55 @@ fun PaymentScreen(
     var dynamicMerchantNameEnabled by remember { mutableStateOf(false) }
     var dynamicMerchantName by remember { mutableStateOf("") }
 
-    // --- LISTA OBSERVABLE DE KEY-VALUE DINÁMICO ---
-    val keyValueList = remember { mutableStateListOf(KeyValuePair(0)) }
-    var nextId by remember { mutableStateOf(1) }
-
-    fun getAmountLong(): Long = amountText.toLongOrNull() ?: 0L
+    fun getAmountLong(): Long {
+        return amountText.toLongOrNull() ?: 0L
+    }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // --- MONTO ---
         Text(
             text = "$${amountText.ifEmpty { "0" }}",
-            style = MaterialTheme.typography.headlineMedium,
+            style = MaterialTheme.typography.headlineLarge,
             color = CloverDarkGreen,
-            modifier = Modifier
-                .align(Alignment.CenterHorizontally)
-                .padding(vertical = 12.dp)
+            modifier = Modifier.padding(16.dp)
         )
 
-        // --- NUMPAD ---
         NumberPad(
             onNumberClick = { digit ->
                 if (amountText.length < 9) amountText += digit
             },
-            onDeleteClick = { if (amountText.isNotEmpty()) amountText = amountText.dropLast(1) },
+            onDeleteClick = {
+                if (amountText.isNotEmpty()) {
+                    amountText = amountText.dropLast(1)
+                }
+            },
+            // ▼▼▼ LÓGICA DE PAGO ACTUALIZADA CON TODOS LOS CAMPOS ▼▼▼
             onAcceptClick = {
                 val amount = getAmountLong()
                 if (amount > 0) {
                     val extras = buildMap {
-                        if (fiscalInvoiceEnabled && fiscalInvoiceNumber.isNotBlank())
+                        if (fiscalInvoiceEnabled && fiscalInvoiceNumber.isNotBlank()) {
                             put(RegionalExtras.FISCAL_INVOICE_NUMBER_KEY, fiscalInvoiceNumber)
-                        if (installmentEnabled && installmentNumber.isNotBlank())
+                        }
+                        if (installmentEnabled && installmentNumber.isNotBlank()) {
                             put(RegionalExtras.INSTALLMENT_NUMBER_KEY, installmentNumber)
-                        if (cashbackEnabled && cashbackAmount.isNotBlank())
+                        }
+                        if (cashbackEnabled && cashbackAmount.isNotBlank()) {
                             put(RegionalExtras.CASHBACK_AMOUNT_KEY, cashbackAmount)
-                        if (isQrPayment)
+                        }
+                        if (isQrPayment) {
                             put(Intents.EXTRA_CUSTOMER_TENDER, "ar.com.fiserv.fiservqr.dev")
-                        if (businessIdEnabled && businessId.isNotBlank())
+                        }
+                        if (businessIdEnabled && businessId.isNotBlank()) {
                             put(RegionalExtras.BUSINESS_ID_KEY, businessId)
-                        if (subMerchantEnabled && subMerchant.isNotBlank())
+                        }
+                        if (subMerchantEnabled && subMerchant.isNotBlank()) {
                             put(RegionalExtras.SUB_MERCHANT_KEY, subMerchant)
-                        if (dynamicMerchantNameEnabled && dynamicMerchantName.isNotBlank())
+                        }
+                        if (dynamicMerchantNameEnabled && dynamicMerchantName.isNotBlank()) {
                             put(RegionalExtras.DYNAMIC_MERCHANT_NAME_KEY, dynamicMerchantName)
-                        // --- KEY-VALUE DINÁMICO ---
-                        keyValueList.forEach { kv ->
-                            if (kv.enabled && kv.key.isNotBlank() && kv.value.isNotBlank()) {
-                                put(kv.key, kv.value)
-                            }
                         }
                     }
                     onPayClick(amount, extras)
@@ -148,98 +310,65 @@ fun PaymentScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // --- SCROLLABLE EXTRAS REGIONALES ---
+        // --- SECCIÓN DE EXTRAS REGIONALES (CON SCROLL) ---
         Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .verticalScroll(rememberScrollState())
+                .width(350.dp)
+                .heightIn(max = 200.dp) // Limita la altura para que no ocupe toda la pantalla
+                .verticalScroll(rememberScrollState()) // Habilita el scroll
         ) {
-            RegionalExtraInput("Nº Factura Fiscal", fiscalInvoiceEnabled, { fiscalInvoiceEnabled = it }, fiscalInvoiceNumber) { fiscalInvoiceNumber = it }
-            RegionalExtraInput("Nº de Cuotas", installmentEnabled, { installmentEnabled = it }, installmentNumber) { installmentNumber = it }
-            RegionalExtraInput("Monto Cashback", cashbackEnabled, { cashbackEnabled = it }, cashbackAmount) { cashbackAmount = it }
-            RegionalExtraInput("Business ID", businessIdEnabled, { businessIdEnabled = it }, businessId) { businessId = it }
-            RegionalExtraInput("Sub Merchant", subMerchantEnabled, { subMerchantEnabled = it }, subMerchant) { subMerchant = it }
-            RegionalExtraInput("Dynamic Merchant Name", dynamicMerchantNameEnabled, { dynamicMerchantNameEnabled = it }, dynamicMerchantName) { dynamicMerchantName = it }
-
-            // --- KEY-VALUE DINÁMICO ---
-            Text("Extras Dinámicos (Key-Value)", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(vertical = 8.dp))
-            keyValueList.forEachIndexed { index, kv ->
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp)
-                ) {
-                    Checkbox(
-                        checked = kv.enabled,
-                        onCheckedChange = { checked ->
-                            keyValueList[index] = kv.copy(enabled = checked)
-                        },
-                        colors = CheckboxDefaults.colors(checkedColor = CloverGreen)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    TextField(
-                        value = kv.key,
-                        onValueChange = { newKey ->
-                            keyValueList[index] = kv.copy(key = newKey)
-                        },
-                        label = { Text("Key") },
-                        enabled = kv.enabled,
-                        singleLine = true,
-                        modifier = Modifier.weight(1f),
-                        colors = TextFieldDefaults.colors(
-                            focusedIndicatorColor = CloverGreen,
-                            focusedContainerColor = Color.Transparent,
-                            unfocusedContainerColor = Color.Transparent,
-                            disabledContainerColor = Color.Transparent,
-                        )
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    TextField(
-                        value = kv.value,
-                        onValueChange = { newValue ->
-                            keyValueList[index] = kv.copy(value = newValue)
-                        },
-                        label = { Text("Value") },
-                        enabled = kv.enabled,
-                        singleLine = true,
-                        modifier = Modifier.weight(1f),
-                        colors = TextFieldDefaults.colors(
-                            focusedIndicatorColor = CloverGreen,
-                            focusedContainerColor = Color.Transparent,
-                            unfocusedContainerColor = Color.Transparent,
-                            disabledContainerColor = Color.Transparent,
-                        )
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    IconButton(onClick = { keyValueList.removeAt(index) }) {
-                        Icon(Icons.Default.Delete, contentDescription = "Eliminar")
-                    }
-                }
-            }
-
-            Button(
-                onClick = {
-                    keyValueList.add(KeyValuePair(nextId))
-                    nextId++
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = CloverDarkGreen),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("+ Agregar Extra", color = Color.White)
-            }
-
+            RegionalExtraInput(
+                label = "Nº Factura Fiscal",
+                checked = fiscalInvoiceEnabled,
+                onCheckedChange = { fiscalInvoiceEnabled = it },
+                value = fiscalInvoiceNumber,
+                onValueChange = { fiscalInvoiceNumber = it }
+            )
+            RegionalExtraInput(
+                label = "Nº de Cuotas",
+                checked = installmentEnabled,
+                onCheckedChange = { installmentEnabled = it },
+                value = installmentNumber,
+                onValueChange = { installmentNumber = it }
+            )
+            RegionalExtraInput(
+                label = "Monto Cashback",
+                checked = cashbackEnabled,
+                onCheckedChange = { cashbackEnabled = it },
+                value = cashbackAmount,
+                onValueChange = { cashbackAmount = it }
+            )
+            // ▼▼▼ NUEVOS CAMPOS AÑADIDOS A LA UI ▼▼▼
+            RegionalExtraInput(
+                label = "Business ID",
+                checked = businessIdEnabled,
+                onCheckedChange = { businessIdEnabled = it },
+                value = businessId,
+                onValueChange = { businessId = it }
+            )
+            RegionalExtraInput(
+                label = "Sub Merchant",
+                checked = subMerchantEnabled,
+                onCheckedChange = { subMerchantEnabled = it },
+                value = subMerchant,
+                onValueChange = { subMerchant = it }
+            )
+            RegionalExtraInput(
+                label = "Dynamic Merchant Name",
+                checked = dynamicMerchantNameEnabled,
+                onCheckedChange = { dynamicMerchantNameEnabled = it },
+                value = dynamicMerchantName,
+                onValueChange = { dynamicMerchantName = it }
+            )
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(vertical = 8.dp)
+                modifier = Modifier.fillMaxWidth()
             ) {
                 Checkbox(
                     checked = isQrPayment,
                     onCheckedChange = { isQrPayment = it },
                     colors = CheckboxDefaults.colors(checkedColor = CloverGreen)
                 )
-                Spacer(modifier = Modifier.width(8.dp))
                 Text("Pago con QR", style = MaterialTheme.typography.bodyLarge)
             }
         }
@@ -248,30 +377,33 @@ fun PaymentScreen(
 
         // --- BOTONES DE ACCIÓN ---
         Row(
-            horizontalArrangement = Arrangement.SpaceEvenly,
+            horizontalArrangement = Arrangement.Center,
             modifier = Modifier.fillMaxWidth()
         ) {
             Button(
                 onClick = onRetrieveClick,
-                modifier = Modifier.size(width = 140.dp, height = 80.dp)
-            ) { Text("Recuperar Pago") }
-
+                colors = ButtonDefaults.buttonColors(containerColor = CloverDarkGreen),
+                modifier = Modifier.width(160.dp)
+            ) {
+                Text("Recuperar Pago", color = Color.White)
+            }
+            Spacer(modifier = Modifier.width(8.dp))
             Button(
                 onClick = onCloseoutBatchClick,
-                modifier = Modifier.size(width = 140.dp, height = 80.dp)
-            ) { Text("Cierre de Lote") }
+                colors = ButtonDefaults.buttonColors(containerColor = CloverDarkGreen),
+                modifier = Modifier.width(160.dp)
+            ) {
+                Text("Cierre de Lote", color = Color.White)
+            }
         }
 
         if (isLoading) {
-            Spacer(modifier = Modifier.height(16.dp))
-            CircularProgressIndicator(color = CloverGreen, modifier = Modifier.align(Alignment.CenterHorizontally))
+            Spacer(modifier = Modifier.height(24.dp))
+            CircularProgressIndicator(color = CloverGreen)
         }
     }
 }
 
-// =================================================================================
-// COMPOSABLES AUXILIARES
-// =================================================================================
 @Composable
 fun RegionalExtraInput(
     label: String,
@@ -282,16 +414,13 @@ fun RegionalExtraInput(
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp)
+        modifier = Modifier.fillMaxWidth()
     ) {
         Checkbox(
             checked = checked,
             onCheckedChange = onCheckedChange,
             colors = CheckboxDefaults.colors(checkedColor = CloverGreen)
         )
-        Spacer(modifier = Modifier.width(8.dp))
         TextField(
             value = value,
             onValueChange = onValueChange,
@@ -313,12 +442,44 @@ fun RegionalExtraInput(
 fun KeepScreenOn() {
     val context = LocalContext.current
     val activity = context as? Activity
+
     DisposableEffect(Unit) {
         activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         onDispose {
             activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
     }
+}
+
+@Composable
+fun SecretExitArea(
+    modifier: Modifier = Modifier,
+    onExit: () -> Unit
+) {
+    var tapCount by remember { mutableStateOf(0) }
+    val timeoutMillis = 1000L
+    var lastTapTime by remember { mutableStateOf(0L) }
+
+    Box(
+        modifier = modifier
+            .size(100.dp)
+            .padding(8.dp)
+            .pointerInput(Unit) {
+                detectTapGestures {
+                    val currentTime = System.currentTimeMillis()
+                    if (currentTime - lastTapTime < timeoutMillis) {
+                        tapCount++
+                    } else {
+                        tapCount = 1
+                    }
+                    lastTapTime = currentTime
+                    if (tapCount >= 3) {
+                        onExit()
+                        tapCount = 0
+                    }
+                }
+            }
+    )
 }
 
 @Composable
@@ -351,7 +512,8 @@ fun NumberPad(
                                 else -> onNumberClick(label)
                             }
                         },
-                        modifier = Modifier.size(80.dp),
+                        modifier = Modifier
+                            .size(80.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = when (label) {
                                 "OK" -> CloverGreen
